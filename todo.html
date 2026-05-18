@@ -1149,10 +1149,8 @@
       flex: 1 1 0;
       min-width: 0;
       font-size: 14px;
-      line-height: 1.35;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      line-height: 1.4;
+      /* Multi-line wrap allowed; height is capped to 3 lines via JS. */
     }
     .task-item .task-meta       { display: none; }
     .task-item .due-pill-wrap   { order: 30; }
@@ -1626,19 +1624,32 @@
   .skip-btn:not(.active) svg { width: 10px; height: 10px; color: var(--text-muted); }
   .skip-btn:hover svg { color: var(--danger); }
 
-  /* Inline editable task text */
+  /* Inline editable task text (textarea: auto-sizes from 1 to 3 lines) */
   .task-text-input {
     flex: 1; font-size: 13px; color: var(--text);
     background: transparent; border: 1px solid transparent;
     padding: 4px 6px; margin: -4px -6px;
     border-radius: 5px; outline: none;
     font-family: inherit; min-width: 0; width: 100%;
-    transition: all 0.15s;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    /* Textarea-specific: no resize handle, line-height matches font. At rest
+       overflow is hidden so the row stays visually clean; on focus we switch
+       to auto so editing past 3 lines reveals an internal scrollbar. */
+    resize: none;
+    line-height: 1.4;
+    overflow: hidden;
+    display: block;
+    vertical-align: middle;
+    -webkit-appearance: none;
+    appearance: none;
   }
+  .task-text-input::-webkit-scrollbar { width: 6px; }
+  .task-text-input::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
   .task-text-input:hover { background: var(--accent-soft); }
   .task-text-input:focus {
     background: var(--surface); border-color: var(--accent-border);
     box-shadow: 0 0 0 3px var(--accent-soft);
+    overflow-y: auto;
   }
 
   /* Due-date pill on task rows */
@@ -1701,6 +1712,19 @@
   .frequency-badge.freq-daily   { background: rgba(34,211,238,0.12);  border-color: rgba(34,211,238,0.4);  color: var(--c-cyan); }
   .frequency-badge.freq-weekly  { background: rgba(52,211,153,0.12);  border-color: rgba(52,211,153,0.4);  color: var(--c-emerald); }
   .frequency-badge.freq-monthly { background: rgba(192,132,252,0.12); border-color: rgba(192,132,252,0.4); color: var(--c-violet); }
+
+  /* Recurring-task indicator (toggle in Profile > Appearance). Color = frequency. */
+  .task-recurring-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; flex-shrink: 0; margin-right: 2px;
+    cursor: help;
+  }
+  .task-recurring-icon svg { width: 14px; height: 14px; display: block; }
+  .task-recurring-icon.freq-daily   { color: var(--c-cyan); }
+  .task-recurring-icon.freq-weekly  { color: var(--c-emerald); }
+  .task-recurring-icon.freq-monthly { color: var(--c-violet); }
+  .task-item.done .task-recurring-icon,
+  .task-item.skipped .task-recurring-icon { opacity: 0.5; }
 
   .priority-select {
     padding: 8px 10px; border: 1px solid var(--border-strong);
@@ -2669,6 +2693,16 @@
             </svg>
           </button>
         </div>
+        <div class="settings-row">
+          <div class="settings-row-text">
+            <div class="settings-row-title">Recurring task indicator</div>
+            <div class="settings-row-sub">Show a refresh icon on tasks spawned from recurring templates. Color marks frequency: cyan = daily, green = weekly, violet = monthly.</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="recurringIndicatorToggle">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
 
       <div class="settings-block">
@@ -3071,6 +3105,9 @@
         templates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
           .sort((a, b) => getOrder(a) - getOrder(b));
         renderTemplates();
+        // Tasks render before templates arrive on first load, so the recurring
+        // indicator can't resolve the frequency on that pass. Re-render now.
+        render();
       });
       unsubSettings = onSnapshot(doc(db, "users", uid, "settings", "main"), snap => {
         settings = snap.exists() ? snap.data() : { notifications: {}, cleanup: {} };
@@ -3079,6 +3116,9 @@
         updateWelcomeVisibility();
         applySettingsToUI();
         scheduleAllNotifications();
+        // Settings (incl. showRecurringIndicator) loads after tasks render the
+        // first time. Re-render so saved toggle states reflect immediately.
+        render();
         // Trigger cleanup if it was deferred until settings loaded
         if (!cleanupRan && tasks.length > 0 && settings.cleanup?.tasksRetentionDays) {
           cleanupRan = true;
@@ -3733,27 +3773,61 @@
 
       li.appendChild(makeStatusButtons(t));
 
-      // Inline-editable text input (acts like text until focused)
-      const text = document.createElement("input");
-      text.type = "text";
+      // Recurring-task indicator (Profile toggle). Color = template frequency.
+      // Only shown for tasks whose template still exists — if the template was
+      // deleted, no icon (we don't claim recurringness we can't verify).
+      if (settings.showRecurringIndicator && t.fromTemplate) {
+        const tpl = templates.find(x => x.id === t.fromTemplate);
+        if (tpl) {
+          const freq = tpl.frequency || "daily";
+          const ic = document.createElement("span");
+          ic.className = "task-recurring-icon freq-" + freq;
+          ic.title = "Recurring · " + freq;
+          ic.setAttribute("aria-label", ic.title);
+          ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg>';
+          li.appendChild(ic);
+        }
+      }
+
+      // Inline-editable text (auto-sizing textarea: 1 line at rest, up to 3
+      // before it starts scrolling internally). Enter blurs (saves); Esc cancels.
+      const text = document.createElement("textarea");
       text.className = "task-text-input";
+      text.rows = 1;
       text.value = t.text;
       text.readOnly = true;
       text.title = "Tap pencil to edit";
+      // Sizing: cap height at 3 line-heights. CSS sets line-height: 1.4 and
+      // padding: 4px top + 4px bottom = 8px. Cap = scrollHeight clamped to
+      // (lineHeightPx * 3 + paddingY); beyond that the textarea scrolls.
+      function sizeTaskText() {
+        text.style.height = "auto";
+        const cs = getComputedStyle(text);
+        const lh = parseFloat(cs.lineHeight) || 18;
+        const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+        const cap = Math.round(lh * 3 + padY);
+        text.style.height = Math.min(text.scrollHeight, cap) + "px";
+      }
       text.addEventListener("focus", () => { if (!text.readOnly) editingTaskId = t.id; });
+      text.addEventListener("input", sizeTaskText);
       text.addEventListener("blur", async () => {
         editingTaskId = null;
-        const v = text.value.trim();
+        // Collapse any embedded newlines (from paste) into spaces.
+        const v = text.value.replace(/\s*\n+\s*/g, " ").trim();
         text.readOnly = true;
-        if (!v) { text.value = t.text; return; }
+        if (!v) { text.value = t.text; sizeTaskText(); return; }
         if (v !== t.text) await updateTaskText(t.id, v);
+        else { text.value = v; sizeTaskText(); }
       });
       text.addEventListener("keydown", e => {
         e.stopPropagation();
         if (e.key === "Enter") { e.preventDefault(); text.blur(); }
-        if (e.key === "Escape") { e.preventDefault(); text.value = t.text; text.blur(); }
+        if (e.key === "Escape") { e.preventDefault(); text.value = t.text; sizeTaskText(); text.blur(); }
       });
       li.appendChild(text);
+      // Initial sizing once the element is in the DOM and has a measurable
+      // line-height. requestAnimationFrame defers until after the layout pass.
+      requestAnimationFrame(sizeTaskText);
 
       // Due date pill (always rendered; empty when no date set)
       li.appendChild(makeDueDatePill(t));
@@ -5291,6 +5365,7 @@
       $("notifWeeklyTime").value = n.weekly?.time || "18:00";
       const c = settings.cleanup || {};
       $("cleanupRetentionSelect").value = String(c.tasksRetentionDays || 0);
+      $("recurringIndicatorToggle").checked = !!settings.showRecurringIndicator;
       updateChildToggleStates();
       // Show denied warning
       $("notifPermissionWarning").style.display =
@@ -5365,6 +5440,17 @@
     $("cleanupRetentionSelect").addEventListener("change", async () => {
       await saveCleanupSettings();
       await runAutoCleanup();
+    });
+
+    $("recurringIndicatorToggle").addEventListener("change", async () => {
+      const on = $("recurringIndicatorToggle").checked;
+      settings.showRecurringIndicator = on;
+      await trackWrite(setDoc(
+        doc(db, "users", uid(), "settings", "main"),
+        { showRecurringIndicator: on },
+        { merge: true }
+      ));
+      render();
     });
 
     $("testNotifBtn").addEventListener("click", async () => {
