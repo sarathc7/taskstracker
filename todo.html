@@ -1640,8 +1640,8 @@
     overflow: hidden;
     display: block;
     vertical-align: middle;
-    -webkit-appearance: none;
-    appearance: none;
+    min-height: calc(1.4em + 8px); /* 1 line + vertical padding floor */
+    box-sizing: border-box;
   }
   .task-text-input::-webkit-scrollbar { width: 6px; }
   .task-text-input::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
@@ -3805,8 +3805,10 @@
         const cs = getComputedStyle(text);
         const lh = parseFloat(cs.lineHeight) || 18;
         const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+        const minH = Math.round(lh + padY);
         const cap = Math.round(lh * 3 + padY);
-        text.style.height = Math.min(text.scrollHeight, cap) + "px";
+        const sh = text.scrollHeight || minH;
+        text.style.height = Math.max(minH, Math.min(sh, cap)) + "px";
       }
       text.addEventListener("focus", () => { if (!text.readOnly) editingTaskId = t.id; });
       text.addEventListener("input", sizeTaskText);
